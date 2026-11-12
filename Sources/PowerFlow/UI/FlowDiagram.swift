@@ -49,8 +49,16 @@ struct FlowDiagram: View {
 
     /// 系统负载的构成项（总和严格等于 sample.pSystem）。
     private var systemBranches: [Branch] {
+        let appTitle: String = {
+            if let topApp = sample.apps.first(where: { $0.watts >= 0.05 })?.name {
+                let count = sample.apps.filter({ $0.watts >= 0.05 }).count
+                return count > 1 ? "\(topApp) 等应用" : topApp
+            }
+            return sample.attributed > 0.05 ? "应用软件" : "应用进程"
+        }()
+
         var items: [Branch] = [
-            Branch(id: "apps", title: "已归因 App", watts: sample.attributed,
+            Branch(id: "apps", title: appTitle, watts: sample.attributed,
                    color: Theme.amber, icon: "cpu"),
             Branch(id: "display", title: "屏幕", watts: sample.pDisplay ?? 0,
                    color: Theme.blue, icon: "display")
@@ -59,7 +67,7 @@ struct FlowDiagram: View {
             items.append(Branch(id: "ports", title: "USB-C", watts: ports,
                                 color: Theme.purple, icon: "cable.connector"))
         }
-        items.append(Branch(id: "residual", title: "未归因", watts: sample.residual ?? 0,
+        items.append(Branch(id: "residual", title: "系统底噪", watts: sample.residual ?? 0,
                             color: Theme.gray, icon: "questionmark.circle"))
         return items
     }

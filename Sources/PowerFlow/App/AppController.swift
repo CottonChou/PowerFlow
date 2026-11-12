@@ -181,8 +181,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         var height = ceil(max(fit.height, hosting.view.fittingSize.height))
         guard height > 120 && height < 1_200 else { return }
 
-        // 为 Popover 增加安全缓冲（+4pt），彻底杜绝底部文字被圆角裁剪
-        height += 4
+        // 为 Popover 增加安全缓冲（+18pt），彻底杜绝 macOS 弹窗圆角与未挂载字体度量差异对底部文字的遮挡
+        height += 18
 
         hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         let target = NSSize(width: width, height: height)
@@ -211,6 +211,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.async { [weak self] in
+                self?.resizePanel(force: true)
+            }
             if CommandLine.arguments.contains("--debug-size") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self, let hosting = self.panelHosting else { return }
