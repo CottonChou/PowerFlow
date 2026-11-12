@@ -79,8 +79,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             true,
             forKey: "NSStatusItem VisibleCC \(Self.statusAutosaveName)"
         )
-        // 固定宽度 62pt：保证 100W+ 三位数字不会被截断为省略号，且避免 variableLength 引起的挤压。
-        let item = NSStatusBar.system.statusItem(withLength: 62)
+        // 自适应宽度：根据实际内容（图标+瓦特数）紧凑排布，消除右侧过宽的空白占用
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.image = NSImage(
                 systemSymbolName: "bolt.fill",
@@ -88,7 +88,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             )
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
-            button.title = " --"
+            button.title = "--"
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             button.target = self
             button.action = #selector(togglePopover(_:))
@@ -126,9 +126,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             .sink { [weak self] sample in
                 guard let button = self?.statusItem?.button else { return }
                 if let watts = sample?.pSystem {
-                    button.title = String(format: " %.0f", watts)
+                    button.title = String(format: "%.0f", watts)
                 } else {
-                    button.title = " --"
+                    button.title = "--"
                 }
                 // App 列表行数会随首次归因结果变化，面板高度必须跟着重算。
                 self?.resizePanel()
