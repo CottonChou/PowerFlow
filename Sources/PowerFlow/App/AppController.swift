@@ -29,6 +29,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         // 调试开关：便于无人值守地验证真实窗口的渲染。
         let arguments = CommandLine.arguments
+        if let idx = arguments.firstIndex(of: "--render-panel"), arguments.indices.contains(idx + 1) {
+            let outPath = arguments[idx + 1]
+            renderOffscreenSample(to: outPath)
+        }
         if arguments.contains("--show-panel") {
             popover.behavior = .applicationDefined
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -152,18 +156,19 @@ final class AppController: NSObject, NSApplicationDelegate {
     ///
     /// `sizeThatFits(in:)` 在视图尚未挂进窗口时拿到的是未布局的估值，会少算几十点，
     /// 底部 App 行与「趋势」入口就被裁掉。这里先给定宽度跑一次布局，再读 `fittingSize`。
-    private func resizePanel() {
+    private func resizePanel(force: Bool = false) {
         guard let hosting = panelHosting else { return }
         let sample = sampler.current
         let signature = [
             sample == nil ? "waiting" : "ready",
             sample?.onAC == true ? "ac" : "batt",
-            sample?.chargePower != nil ? "chg" : "-",
+            (sample?.chargePower ?? 0) > 0.05 ? "chg" : "-",
             sample?.dischargePower != nil ? "dis" : "-",
             sample?.pInput != nil ? "in" : "-",
+            "ports\(sample?.pPorts != nil ? 1 : 0)",
             "rows\(min(3, sample?.apps.count ?? 0))"
         ].joined(separator: "|")
-        if signature == panelSignature { return }
+        if !force && signature == panelSignature { return }
         panelSignature = signature
 
         let width = Self.panelWidth
@@ -172,11 +177,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: 600)
         hosting.view.layoutSubtreeIfNeeded()
 
-        var height = ceil(hosting.view.fittingSize.height)
-        if !(height > 120 && height < 1_200) {
-            height = ceil(hosting.sizeThatFits(in: NSSize(width: width, height: 2_000)).height)
-        }
+        let fit = hosting.sizeThatFits(in: NSSize(width: width, height: 2_000))
+        var height = ceil(max(fit.height, hosting.view.fittingSize.height))
         guard height > 120 && height < 1_200 else { return }
+
+        // 为 Popover 增加安全缓冲（+4pt），彻底杜绝底部文字被圆角裁剪
+        height += 4
 
         hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         let target = NSSize(width: width, height: height)
@@ -201,6 +207,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(sender)
         } else {
+            resizePanel(force: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)
@@ -281,5 +288,42 @@ final class AppController: NSObject, NSApplicationDelegate {
         // 这时至少把窗口提到最前（不抢焦点），否则用户以为应用没起来。
         window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func renderOffscreenSample(to path: String) {
+        let isChg = path.contains("charging")
+        let sample = PowerSample(
+            ts: Date(),
+            onAC: true,
+            charging: isChg,
+            batteryPercent: isChg ? 45 : 80,
+            batteryMinutes: isChg ? 55 : nil,
+            pInput: isChg ? 45.0 : 7.0,
+            pSystem: 12.5,
+            pBattery: isChg ? 30.0 : 0.0,
+            pDisplay: 2.1,
+            pPorts: nil,
+            apps: [
+                AppUsage(key: "1", name: "Xcode", watts: 6.8, estimated: false, processCount: 4),
+                AppUsage(key: "2", name: "Antigravity", watts: 2.4, estimated: false, processCount: 1)
+            ]
+        )
+        let view = PanelContent(
+            sample: sample,
+            capabilities: Capabilities(smc: true, telemetry: true, displayKey: "DBLB", ports: true, energy: true),
+            errorText: nil
+        )
+        .environment(\.isOffscreenRender, true)
+
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2.0
+        if let image = renderer.nsImage,
+           let tiff = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+            print("Rendered panel to \(path)")
+        }
+        exit(0)
     }
 }

@@ -16,8 +16,10 @@ struct PanelContent: View {
             if let sample {
                 headline(sample)
                 FlowDiagram(sample: sample)
-                    .padding(.horizontal, 6)
-                Divider().opacity(0.25)
+                    .padding(.horizontal, 14)
+                Divider()
+                    .padding(.horizontal, 14)
+                    .opacity(0.25)
                 appList(sample)
                 footer
             } else {
@@ -215,7 +217,8 @@ struct PanelContent: View {
             .foregroundStyle(Theme.mint)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
         .background(.white.opacity(0.03))
     }
 

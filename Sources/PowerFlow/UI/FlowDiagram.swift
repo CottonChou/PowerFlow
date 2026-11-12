@@ -80,7 +80,7 @@ struct FlowDiagram: View {
         sample.onAC ? "powerplug.fill" : "battery.75percent"
     }
 
-    private static let height: CGFloat = 220
+    private static let height: CGFloat = 204
     private static let maxThickness: CGFloat = 20
     private static let minThickness: CGFloat = 2.0
 
@@ -99,24 +99,26 @@ struct FlowDiagram: View {
             let branchMax = systemBranches.map(\.watts).max() ?? 0
             let scale = max(sourceWatts, sample.pSystem ?? 0, sample.chargePower ?? 0, branchMax, 1)
 
-            let sourceRight: CGFloat = 58
-            let macLeft: CGFloat = 95
-            let macRight: CGFloat = 166
-            let branchLeft: CGFloat = width - 114
+            // 水平基准锚点（与整体面板两端 14pt 边距严格对齐）
+            let sourceRight: CGFloat = 54
+            let macLeft: CGFloat = 105
+            let macRight: CGFloat = 173
+            let branchLeft: CGFloat = width - 112
+            let branchCenterX: CGFloat = width - 56
 
-            let isCharging = sample.onAC && sample.chargePower != nil
+            let isCharging = sample.onAC && (sample.chargePower ?? 0) > 0.05
             let chargeWatts = sample.chargePower ?? 0
 
             // 垂直锚点计算
-            let sourceCenterY: CGFloat = isCharging ? 112 : 118
-            let macCenterY: CGFloat = isCharging ? 134 : 118
+            let sourceCenterY: CGFloat = isCharging ? 110 : 102
+            let macCenterY: CGFloat = isCharging ? 132 : 102
 
             ZStack {
                 // MARK: - 第一级流向：输入 -> (电池充电 + 系统负载)
                 if isCharging {
                     // 1. 输入 -> 电池充电（直接分流到右上角电池节点）
                     Ribbon(
-                        startY: sourceCenterY - 10, endY: 26,
+                        startY: sourceCenterY - 14, endY: 24,
                         startThickness: thickness(chargeWatts, scale: scale),
                         endThickness: thickness(chargeWatts, scale: scale)
                     )
@@ -129,7 +131,7 @@ struct FlowDiagram: View {
 
                     // 2. 输入 -> Mac 系统负载节点
                     Ribbon(
-                        startY: sourceCenterY + 8, endY: macCenterY,
+                        startY: sourceCenterY + 10, endY: macCenterY,
                         startThickness: thickness(sample.pSystem ?? 0, scale: scale),
                         endThickness: thickness(sample.pSystem ?? 0, scale: scale)
                     )
@@ -141,10 +143,10 @@ struct FlowDiagram: View {
                     .position(x: (sourceRight + macLeft) / 2, y: height / 2)
 
                     // 右上角电池充入节点
-                    batteryChargingNode(watts: chargeWatts, x: width - 57, y: 26)
+                    batteryChargingNode(watts: chargeWatts, x: branchCenterX, y: 24)
 
                 } else {
-                    // 非充电状态（纯电池放电 或 插电满电/待机）：输入 100% 进入系统
+                    // 非充电状态（纯电池放电 或 插电待机）：总输入 100% 进入系统负载
                     let flowColor = sample.onAC ? Theme.mint : Theme.amber
                     Ribbon(
                         startY: sourceCenterY, endY: macCenterY,
@@ -157,36 +159,45 @@ struct FlowDiagram: View {
                     ))
                     .frame(width: macLeft - sourceRight, height: height)
                     .position(x: (sourceRight + macLeft) / 2, y: height / 2)
-
-                    // 插电满电/待机徽章（收缩折叠，不占流带）
-                    if sample.onAC {
-                        batteryIdleBadge(x: width - 57, y: 22)
-                    }
                 }
 
                 // MARK: - 第二级流向：Mac 系统负载 -> 各构成分支
                 let rows = systemBranches
                 let branchCount = rows.count
-                let startYOffset: CGFloat = isCharging || sample.onAC ? 58 : 28
-                let availableHeight: CGFloat = height - startYOffset - 16
+                let topY: CGFloat = isCharging ? 68 : 26
+                let bottomY: CGFloat = isCharging ? 186 : 178
+
+                // 核心修复：Sankey 流带分层堆叠（每个分支在 Mac 右侧有独立的起始 Y，绝不挤压重叠）
+                let branchThicknesses = rows.map { thickness($0.watts, scale: scale) }
+                let ribbonGap: CGFloat = 1.5
+                let totalThickness = branchThicknesses.reduce(0, +) + ribbonGap * CGFloat(max(0, branchCount - 1))
+                let stackTop = macCenterY - totalThickness / 2
+
+                var currentY = stackTop
+                let ribbonOrigins: [CGFloat] = branchThicknesses.map { t in
+                    let origin = currentY + t / 2
+                    currentY += t + ribbonGap
+                    return origin
+                }
 
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, branch in
-                    let branchY = startYOffset + (availableHeight * CGFloat(index) / CGFloat(max(1, branchCount - 1)))
-                    let branchThickness = thickness(branch.watts, scale: scale)
+                    let branchY = branchCount == 1 ? (topY + bottomY) / 2
+                        : topY + (bottomY - topY) * CGFloat(index) / CGFloat(branchCount - 1)
+                    let branchThickness = branchThicknesses[index]
 
                     Ribbon(
-                        startY: macCenterY, endY: branchY,
+                        startY: ribbonOrigins[index], endY: branchY,
                         startThickness: branchThickness,
                         endThickness: branchThickness
                     )
                     .fill(LinearGradient(
-                        colors: [branch.color.opacity(0.22), branch.color.opacity(0.08)],
+                        colors: [branch.color.opacity(0.24), branch.color.opacity(0.08)],
                         startPoint: .leading, endPoint: .trailing
                     ))
                     .frame(width: branchLeft - macRight, height: height)
                     .position(x: (macRight + branchLeft) / 2, y: height / 2)
 
-                    branchNode(branch, x: width - 57, y: branchY)
+                    branchNode(branch, x: branchCenterX, y: branchY)
                 }
 
                 // 源节点与系统节点
@@ -223,35 +234,7 @@ struct FlowDiagram: View {
                         .stroke(Theme.mint.opacity(0.35), lineWidth: 0.8)
                 )
         )
-        .frame(width: 114)
-        .position(x: x, y: y)
-    }
-
-    private func batteryIdleBadge(x: CGFloat, y: CGFloat) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: "battery.100percent")
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-            Text("电池满电浮充")
-                .font(.system(size: 8.5))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-            Text("0.0 W")
-                .font(.system(size: 9, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.secondary.opacity(0.8))
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3.5)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
-        .frame(width: 114)
+        .frame(width: 112)
         .position(x: x, y: y)
     }
 
@@ -281,7 +264,7 @@ struct FlowDiagram: View {
                         .stroke(branch.color.opacity(0.20), lineWidth: 0.6)
                 )
         )
-        .frame(width: 114)
+        .frame(width: 112)
         .position(x: x, y: y)
     }
 
@@ -301,7 +284,7 @@ struct FlowDiagram: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
-        .frame(width: 54, height: 74)
+        .frame(width: 54, height: 72)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(LinearGradient(
@@ -313,7 +296,7 @@ struct FlowDiagram: View {
                         .stroke(tint.opacity(0.24), lineWidth: 0.7)
                 )
         )
-        .position(x: 32, y: centerY)
+        .position(x: 27, y: centerY)
     }
 
     private func macNode(centerY: CGFloat) -> some View {
@@ -328,7 +311,7 @@ struct FlowDiagram: View {
                 .font(.system(size: 7))
                 .foregroundStyle(.secondary)
         }
-        .frame(width: 70, height: 76)
+        .frame(width: 68, height: 74)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(.white.opacity(0.04))
@@ -337,6 +320,6 @@ struct FlowDiagram: View {
                         .stroke(.white.opacity(0.08), lineWidth: 0.6)
                 )
         )
-        .position(x: 130, y: centerY)
+        .position(x: 139, y: centerY)
     }
 }
