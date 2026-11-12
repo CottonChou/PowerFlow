@@ -35,6 +35,13 @@ public final class EnergyAttributor: @unchecked Sendable {
 
     public func sample(now: Date) -> Result {
         let elapsed = previousTimestamp.map { now.timeIntervalSince($0) } ?? 0
+
+        // 睡眠唤醒保护：如果时间间隔过长（如休眠数小时），基线已失效，重置并建立新基线
+        if elapsed > 10 {
+            reset()
+            return sample(now: now)
+        }
+
         let pids = EnergyProbe.allPIDs()
 
         var current: [pid_t: ProcessEnergy] = [:]
@@ -47,7 +54,6 @@ public final class EnergyAttributor: @unchecked Sendable {
             guard let reading = EnergyProbe.read(pid: pid) else { continue }
             current[pid] = reading
             guard elapsed > 0.2 else { continue }
-            guard let identity = ProcessResolver.identify(pid: pid) else { continue }
 
             guard let baseline = previous[pid],
                   baseline.startAbstime == reading.startAbstime else {
@@ -56,8 +62,10 @@ public final class EnergyAttributor: @unchecked Sendable {
 
             let energyDelta = subtract(reading.energyNJ, baseline.energyNJ)
             let cpuDelta = subtract(reading.cpuNS, baseline.cpuNS)
-            let wakeupDelta = subtract(reading.wakeups, baseline.wakeups)
-            let ioDelta = subtract(reading.ioBytes, baseline.ioBytes)
+
+            // 关键优化：绝大多数进程是空闲的（能耗与 CPU 增量皆为 0），直接跳过！
+            // 避免每 2 秒对 1000 个无能耗进程进行昂贵的 proc_pidpath 系统调用和字符串解析
+            guard energyDelta > 0 || cpuDelta > 0 else { continue }
 
             let watts: Double
             let estimated: Bool
@@ -65,8 +73,15 @@ public final class EnergyAttributor: @unchecked Sendable {
                 watts = Double(energyDelta) / 1e9 / elapsed
                 estimated = false
                 anyMeasured = true
+            } else if reading.energyNJ > 0 || baseline.energyNJ > 0 {
+                // 系统支持 v6 能量记账，但本周期未产生非零焦耳增量，说明功耗极低
+                watts = 0
+                estimated = false
             } else {
+                // 系统不支持 v6 能量记账（返回 0），退回基于 CPU/IO/Wakeup 的加权估算
                 let cpuSeconds = Double(cpuDelta) / 1e9
+                let ioDelta = subtract(reading.ioBytes, baseline.ioBytes)
+                let wakeupDelta = subtract(reading.wakeups, baseline.wakeups)
                 let ioMB = Double(ioDelta) / 1_048_576
                 watts = cpuSeconds / elapsed * Self.wattsPerBusyCore
                     + ioMB / elapsed * Self.wattsPerIOMegabyte
@@ -76,6 +91,9 @@ public final class EnergyAttributor: @unchecked Sendable {
 
             let capped = min(max(0, watts), Self.perProcessCeiling)
             guard capped > Self.floorWatts else { continue }
+
+            // 仅对真正产生能耗且高于阈值的少数进程（通常仅 10-30 个）解析 Identity
+            guard let identity = ProcessResolver.identify(pid: pid) else { continue }
             deltaCount += 1
 
             if var existing = aggregate[identity.key] {

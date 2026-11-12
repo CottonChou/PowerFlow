@@ -26,12 +26,14 @@ public enum Downsampler {
                 }
             }
         }
-        let apps = merged
+        let apps = Array(merged
             .map { AppUsage(key: $0.key, name: $0.value.name,
                             watts: $0.value.watts / count,
                             estimated: $0.value.estimated,
                             processCount: max(1, $0.value.count / samples.count)) }
+            .filter { $0.watts >= 0.01 }
             .sorted { $0.watts > $1.watts }
+            .prefix(25))
 
         let last = samples[samples.count - 1]
         return PowerSample(

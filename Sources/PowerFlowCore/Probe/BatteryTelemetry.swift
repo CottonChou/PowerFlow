@@ -49,12 +49,29 @@ public enum BatteryProbe {
                 reading.healthPercent = min(100, Double(full) / Double(design) * 100)
             }
 
+            if let adapter = (registry["AdapterDetails"] as? [String: Any])
+                ?? (registry["AppleRawAdapterDetails"] as? [[String: Any]])?.first {
+                reading.adapterRatedWatts = int(adapter["Watts"]).map(Double.init)
+            }
+        }
+
+        // 先通过 IOPS 刷新实时的 onAC、charging、电量及剩余时间
+        applyPowerSource(&reading)
+
+        // 结合精准的供电状态计算 pBattery 与 pSystem
+        if let registry = registryProperties() {
             if let telemetry = registry["PowerTelemetryData"] as? [String: Any] {
-                // 实测发现 `BatteryPower` / `SystemLoad` 的符号在不同机型与固件上
-                // 不一致：同样是放电，有的回报 +29670，有的回报无符号包装的 -30672。
-                // 因此只取绝对值，方向由充放电状态决定，避免依赖原始符号。
                 let rawBattery = milliwatts(telemetry["BatteryPower"]).map(abs)
-                reading.pBattery = rawBattery.map { reading.charging ? $0 : -$0 }
+                if let raw = rawBattery {
+                    if reading.charging {
+                        reading.pBattery = raw
+                    } else if !reading.onAC {
+                        reading.pBattery = -raw
+                    } else {
+                        // 插电未充电：电池处于浮充待机。小波动归零，不把满电误报为放电
+                        reading.pBattery = raw < 0.35 ? 0.0 : -raw
+                    }
+                }
                 reading.pInput = milliwatts(telemetry["SystemPowerIn"])
                 reading.pSystem = milliwatts(telemetry["SystemLoad"]).map(abs)
                 reading.pLoss = milliwatts(telemetry["AdapterEfficiencyLoss"]).map(abs)
@@ -64,26 +81,27 @@ public enum BatteryProbe {
                let volts = int(registry["Voltage"]).map({ Double($0) / 1_000 }),
                let amps = signedInt(registry["Amperage"]).map({ Double($0) / 1_000 }) {
                 let magnitude = abs(volts * amps)
-                reading.pBattery = reading.charging ? magnitude : -magnitude
+                if reading.charging {
+                    reading.pBattery = magnitude
+                } else if !reading.onAC {
+                    reading.pBattery = -magnitude
+                } else {
+                    reading.pBattery = magnitude < 0.35 ? 0.0 : (amps < 0 ? -magnitude : magnitude)
+                }
             }
 
             // 系统负载缺失时的兜底：放电时电池功率即系统负载；
-            // 插电时用 输入 − 电池 反推。
+            // 插电时用 输入 − 电池充电 反推。
             if reading.pSystem == nil {
                 if !reading.onAC, let battery = reading.pBattery {
                     reading.pSystem = abs(battery)
                 } else if let input = reading.pInput, let battery = reading.pBattery {
-                    reading.pSystem = abs(input - battery)
+                    let charge = max(0, battery)
+                    reading.pSystem = max(0, input - charge)
                 }
-            }
-
-            if let adapter = (registry["AdapterDetails"] as? [String: Any])
-                ?? (registry["AppleRawAdapterDetails"] as? [[String: Any]])?.first {
-                reading.adapterRatedWatts = int(adapter["Watts"]).map(Double.init)
             }
         }
 
-        applyPowerSource(&reading)
         return reading
     }
 

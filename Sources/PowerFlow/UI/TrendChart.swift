@@ -70,7 +70,7 @@ struct TrendChart: View {
             }
         }
         result.append(ACSpan(
-            start: runStart.addingTimeInterval(-extend),
+            start: result.isEmpty ? runStart.addingTimeInterval(-extend) : runStart,
             end: tail.addingTimeInterval(extend),
             onAC: runState
         ))

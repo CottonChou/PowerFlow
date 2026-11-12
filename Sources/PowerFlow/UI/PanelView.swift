@@ -104,7 +104,7 @@ struct PanelContent: View {
                 } else if let discharge = sample.dischargePower {
                     secondaryRow(label: "放电", value: discharge, tint: Theme.amber)
                 } else {
-                    secondaryRow(label: "电池", value: nil, tint: Theme.gray)
+                    secondaryRow(label: "电池", text: "待机", tint: Theme.gray)
                 }
                 if let input = sample.pInput, sample.onAC {
                     secondaryRow(label: "输入", value: input, tint: Theme.blue)
@@ -127,12 +127,12 @@ struct PanelContent: View {
         .padding(.bottom, 4)
     }
 
-    private func secondaryRow(label: String, value: Double?, tint: Color) -> some View {
+    private func secondaryRow(label: String, value: Double? = nil, text: String? = nil, tint: Color) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 8))
                 .foregroundStyle(.secondary)
-            Text(Fmt.watts(value) + " W")
+            Text(text ?? (Fmt.watts(value) + " W"))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(tint)

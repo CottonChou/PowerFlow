@@ -49,7 +49,7 @@ public final class SQLiteStore: @unchecked Sendable {
             p_display REAL, p_ports REAL,
             apps TEXT
         );
-        CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);
+        DROP INDEX IF EXISTS idx_samples_ts;
         """
         return sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
     }
@@ -84,6 +84,10 @@ public final class SQLiteStore: @unchecked Sendable {
                 sqlite3_bind_text(statement, 11, "[]", -1, sqliteTransient)
             }
             sqlite3_step(statement)
+
+            // 自动清理 7 天前的历史记录，避免数据库无限增大
+            let cutoff = sample.ts.timeIntervalSince1970 - (7 * 86_400)
+            sqlite3_exec(db, "DELETE FROM samples WHERE ts < \(cutoff);", nil, nil, nil)
         }
     }
 

@@ -1,6 +1,13 @@
 import SwiftUI
 import PowerFlowCore
 
+enum RankingScope: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case batteryOnly = "🔋 仅纯电池"
+
+    var id: String { rawValue }
+}
+
 /// 趋势窗口的纯视图，数据由外部注入。
 struct TrendContent: View {
     let range: TrendRange
@@ -11,11 +18,22 @@ struct TrendContent: View {
     /// 离屏渲染时，ScrollView 与系统控件无法绘制，改用等价布局。
     var isOffscreen: Bool = false
 
+    @State private var rankingScope: RankingScope = .all
+
     private var latest: PowerSample? { samples.last }
+
+    private var rankingSamples: [PowerSample] {
+        switch rankingScope {
+        case .all:
+            return samples
+        case .batteryOnly:
+            return samples.filter { !$0.onAC }
+        }
+    }
 
     private var rangeApps: [AppUsage] {
         // 0.0W 的行只是噪声：空闲进程会一直挂在尾部，把真正有量的挤下去。
-        AppUsageAggregator.aggregate(samples, limit: 8)
+        AppUsageAggregator.aggregate(rankingSamples, limit: 8)
             .filter { $0.watts >= 0.05 }
     }
 
@@ -181,12 +199,33 @@ struct TrendContent: View {
         let apps = rangeApps
         let peak = apps.map(\.watts).max() ?? 1
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("App 能耗排行")
                     .font(.system(size: 11, weight: .medium))
-                Text(range.title + "平均")
+                Text(range.title + (rankingScope == .batteryOnly ? " · 仅电池供电" : " · 平均"))
                     .font(.system(size: 8.5))
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 2) {
+                    ForEach(RankingScope.allCases) { scope in
+                        Button {
+                            rankingScope = scope
+                        } label: {
+                            Text(scope.rawValue)
+                                .font(.system(size: 9, weight: rankingScope == scope ? .semibold : .regular))
+                                .foregroundStyle(rankingScope == scope ? (scope == .batteryOnly ? Theme.amber : .primary) : .secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2.5)
+                                .background(
+                                    Capsule().fill(rankingScope == scope ? (scope == .batteryOnly ? Theme.amber.opacity(0.18) : Color.white.opacity(0.12)) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(1.5)
+                .background(Capsule().fill(Color.white.opacity(0.05)))
+
                 Spacer()
                 Text("≈ 为估算值")
                     .font(.system(size: 8))
@@ -194,7 +233,10 @@ struct TrendContent: View {
             }
 
             if apps.isEmpty {
-                Text("暂无归因数据。")
+                let emptyHint = rankingScope == .batteryOnly
+                    ? "所选时间窗口内未检测到纯电池放电记录（一直在外接电源供电）。"
+                    : "暂无归因数据。"
+                Text(emptyHint)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)

@@ -26,14 +26,39 @@ public enum ProcessResolver {
         return String(cString: buffer)
     }
 
+    private static let lock = NSLock()
+    private static var cache: [pid_t: Identity] = [:]
+
     public static func identify(pid: pid_t) -> Identity? {
+        lock.lock()
+        if let cached = cache[pid] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let found: Identity?
         if let full = path(of: pid), let identity = identity(fromPath: full) {
-            return identity
+            found = identity
+        } else if let name = name(of: pid), !name.isEmpty {
+            found = Identity(key: "proc:" + name, name: name)
+        } else {
+            found = nil
         }
-        if let name = name(of: pid), !name.isEmpty {
-            return Identity(key: "proc:" + name, name: name)
+
+        if let found {
+            lock.lock()
+            if cache.count > 2048 { cache.removeAll(keepingCapacity: true) }
+            cache[pid] = found
+            lock.unlock()
         }
-        return nil
+        return found
+    }
+
+    public static func clearCache() {
+        lock.lock()
+        cache.removeAll(keepingCapacity: true)
+        lock.unlock()
     }
 
     /// 从可执行文件路径推导宿主 App。

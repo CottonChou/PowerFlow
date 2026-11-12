@@ -41,7 +41,9 @@ public enum PortProbe {
         }
 
         var excluded = false
-        if onAC, let inputCandidate = rails.max(by: { $0.volts < $1.volts }) {
+        // 启发式排除：仅当存在电压 >= 8.5V（PD 协商高压如 9V/15V/20V）的轨道时，
+        // 才作为可能的 USB-C 供电输入通道排除；避免用 MagSafe 充电时（USB-C 口全为 5V 外设）把外设误杀。
+        if onAC, let inputCandidate = rails.filter({ $0.volts >= 8.5 }).max(by: { $0.volts < $1.volts }) {
             rails.removeAll { $0.channel == inputCandidate.channel }
             excluded = true
         }

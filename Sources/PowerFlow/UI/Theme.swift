@@ -73,7 +73,10 @@ struct StatePill: View {
     private var label: String {
         guard let sample else { return "等待采样" }
         if sample.charging { return "充电中" }
-        return sample.onAC ? "外接供电" : "电池供电"
+        if sample.onAC {
+            return (sample.batteryPercent ?? 0) >= 99 ? "外接供电 · 满电" : "外接供电"
+        }
+        return "电池供电"
     }
 
     private var tint: Color {

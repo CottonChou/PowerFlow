@@ -52,7 +52,14 @@ public enum PowerResolver {
             // mV × mA = µW，除 1e6 得瓦特
             let watts = volts * amps / 1_000_000
             if watts.isFinite, batteryRange.contains(abs(watts)) {
-                pack = battery.charging ? abs(watts) : -abs(watts)
+                if battery.charging {
+                    pack = abs(watts)
+                } else if !battery.onAC {
+                    pack = -abs(watts)
+                } else {
+                    // 插电未充电：处于浮充待机。小波动归零为 0.0W，只有明确协同放电才计负
+                    pack = abs(watts) < 0.35 ? 0.0 : (amps < 0 ? -abs(watts) : 0.0)
+                }
                 notes.append("B0AV×B0AC")
             }
         }
@@ -73,11 +80,12 @@ public enum PowerResolver {
             notes.append("电池反推")
         }
 
-        // 5. 适配器输入：遥测最可靠；缺失时用 系统 + 电池 + 损耗 推算
+        // 5. 适配器输入：遥测最可靠；缺失时用 系统 + 充电功率 推算
         var input = battery.pInput
         if let value = input, value < 0.05 { input = 0 }
-        if input == nil, battery.onAC, let system, let pack {
-            input = system + pack
+        if input == nil, battery.onAC, let system {
+            let charge = max(0, pack ?? 0)
+            input = system + charge
             notes.append("输入推算")
         }
 

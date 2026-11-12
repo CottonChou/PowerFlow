@@ -59,13 +59,14 @@ public final class PowerSampler: ObservableObject {
             tiers.load(coarse: store.load(since: since))
         }
         tiers.onCoarseSample = { [weak self] sample in
-            self?.store?.insert(sample)
+            guard let self else { return }
+            self.workQueue.async {
+                self.store?.insert(sample)
+            }
         }
-        Task { @MainActor in
-            self.capabilities.smc = self.smc.isOpen
-            self.resolvedDisplayKey = Self.displayKeys.first { self.smc.read($0) != nil }
-            self.capabilities.displayKey = self.resolvedDisplayKey
-        }
+        self.capabilities.smc = self.smc.isOpen
+        self.resolvedDisplayKey = Self.displayKeys.first { self.smc.read($0) != nil }
+        self.capabilities.displayKey = self.resolvedDisplayKey
     }
 
     public func start() {
@@ -139,7 +140,9 @@ public final class PowerSampler: ObservableObject {
         current = sample
         capabilities.telemetry = resolved.pInput != nil
         capabilities.ports = resolved.pPorts != nil
-        capabilities.energy = energy.measured
+        if energy.measured || capabilities.energy {
+            capabilities.energy = true
+        }
         lastError = energy.processCount == 0 && sample.apps.isEmpty
             ? "尚未取得进程能量增量（首轮采样只建立基线）"
             : nil

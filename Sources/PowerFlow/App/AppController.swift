@@ -75,8 +75,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             true,
             forKey: "NSStatusItem VisibleCC \(Self.statusAutosaveName)"
         )
-        // 固定宽度：菜单栏拥挤时 variableLength 会被系统压到只剩 "…36"。
-        let item = NSStatusBar.system.statusItem(withLength: 52)
+        // 固定宽度 62pt：保证 100W+ 三位数字不会被截断为省略号，且避免 variableLength 引起的挤压。
+        let item = NSStatusBar.system.statusItem(withLength: 62)
         if let button = item.button {
             button.image = NSImage(
                 systemSymbolName: "bolt.fill",
@@ -193,7 +193,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func togglePopover(_ sender: Any?) {
         guard let button = statusItem?.button else { return }
         let event = NSApp.currentEvent
-        if event?.type == .rightMouseUp {
+        let isRightClick = event?.type == .rightMouseUp || (event?.modifierFlags.contains(.control) == true)
+        if isRightClick {
             showStatusMenu(relativeTo: button)
             return
         }
