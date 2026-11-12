@@ -172,19 +172,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         panelSignature = signature
 
         let width = Self.panelWidth
-        // 测量用的临时高度，测完必须还原：否则 SwiftUI 会把内容在过高的视图里居中，
-        // 弹层按 contentSize 裁剪后顶部状态行就被切掉。
-        hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: 600)
-        hosting.view.layoutSubtreeIfNeeded()
-
         let fit = hosting.sizeThatFits(in: NSSize(width: width, height: 2_000))
-        var height = ceil(max(fit.height, hosting.view.fittingSize.height))
+        var height = ceil(fit.height)
+        if height < 120 || height > 1_200 {
+            height = ceil(hosting.view.fittingSize.height)
+        }
         guard height > 120 && height < 1_200 else { return }
 
-        // 为 Popover 增加安全缓冲（+18pt），彻底杜绝 macOS 弹窗圆角与未挂载字体度量差异对底部文字的遮挡
-        height += 18
-
-        hosting.view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         let target = NSSize(width: width, height: height)
         if abs(popover.contentSize.height - target.height) > 0.5
             || abs(popover.contentSize.width - target.width) > 0.5 {
@@ -211,9 +205,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)
-            DispatchQueue.main.async { [weak self] in
-                self?.resizePanel(force: true)
-            }
             if CommandLine.arguments.contains("--debug-size") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self, let hosting = self.panelHosting else { return }
