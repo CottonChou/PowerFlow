@@ -20,6 +20,9 @@ fi
 echo "==> 组装 $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/PowerFlow"
+if [ -f "Resources/AppIcon.icns" ]; then
+    cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+fi
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -30,6 +33,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>zh_CN</string>
     <key>CFBundleExecutable</key>
     <string>PowerFlow</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>io.powerflow.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
