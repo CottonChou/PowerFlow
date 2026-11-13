@@ -21,8 +21,12 @@ public final class EnergyAttributor: @unchecked Sendable {
     /// 单进程上限，防止计数器回绕造成的假尖峰。
     static let perProcessCeiling = 200.0
     static let floorWatts = 0.02
+    /// 指数加权移动平均（EMA）平滑系数：新值占 45%，历史衰减 55%
+    static let smoothingFactor = 0.45
+    static let decayThreshold = 0.03
 
     private var previous: [pid_t: ProcessEnergy] = [:]
+    private var smoothed: [String: (name: String, watts: Double, estimated: Bool, count: Int)] = [:]
     private var previousTimestamp: Date?
     private let ownPID = getpid()
 
@@ -30,6 +34,7 @@ public final class EnergyAttributor: @unchecked Sendable {
 
     public func reset() {
         previous.removeAll()
+        smoothed.removeAll()
         previousTimestamp = nil
     }
 
@@ -109,7 +114,26 @@ public final class EnergyAttributor: @unchecked Sendable {
         previous = current
         previousTimestamp = now
 
-        let apps = aggregate
+        // 指数平滑更新：新采样占 45%，旧值衰减 55%；未在新采样出现的条目自然衰减
+        var nextSmoothed: [String: (name: String, watts: Double, estimated: Bool, count: Int)] = [:]
+        for (key, existing) in smoothed {
+            let decayed = existing.watts * (1.0 - Self.smoothingFactor)
+            if decayed >= Self.decayThreshold {
+                nextSmoothed[key] = (existing.name, decayed, existing.estimated, existing.count)
+            }
+        }
+        for (key, sampleVal) in aggregate {
+            if let prior = smoothed[key] {
+                let blended = prior.watts * (1.0 - Self.smoothingFactor) + sampleVal.watts * Self.smoothingFactor
+                nextSmoothed[key] = (sampleVal.name, blended, sampleVal.estimated, sampleVal.count)
+            } else {
+                // 首次出现的 App 直接采用当前实测值，保证爆发负载能被立即捕获展示
+                nextSmoothed[key] = sampleVal
+            }
+        }
+        smoothed = nextSmoothed
+
+        let apps = smoothed
             .map { AppUsage(key: $0.key, name: $0.value.name, watts: $0.value.watts,
                             estimated: $0.value.estimated, processCount: $0.value.count) }
             .sorted { $0.watts > $1.watts }

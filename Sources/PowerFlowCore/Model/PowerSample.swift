@@ -30,6 +30,14 @@ public struct PowerSample: Identifiable, Sendable {
     public let charging: Bool
     public let batteryPercent: Int?
     public let batteryMinutes: Int?
+    public let batteryTemperature: Double?
+    public let batteryCycleCount: Int?
+    public let batteryHealthPercent: Double?
+    public let adapterRatedWatts: Double?
+    public let adapterName: String?
+    public let adapterNegotiatedWatts: Double?
+    public let adapterNegotiatedVoltageMV: Int?
+    public let adapterNegotiatedCurrentMA: Int?
     public let pInput: Double?
     public let pSystem: Double?
     public let pBattery: Double?
@@ -45,6 +53,14 @@ public struct PowerSample: Identifiable, Sendable {
         charging: Bool,
         batteryPercent: Int?,
         batteryMinutes: Int?,
+        batteryTemperature: Double? = nil,
+        batteryCycleCount: Int? = nil,
+        batteryHealthPercent: Double? = nil,
+        adapterRatedWatts: Double? = nil,
+        adapterName: String? = nil,
+        adapterNegotiatedWatts: Double? = nil,
+        adapterNegotiatedVoltageMV: Int? = nil,
+        adapterNegotiatedCurrentMA: Int? = nil,
         pInput: Double?,
         pSystem: Double?,
         pBattery: Double?,
@@ -57,6 +73,14 @@ public struct PowerSample: Identifiable, Sendable {
         self.charging = charging
         self.batteryPercent = batteryPercent
         self.batteryMinutes = batteryMinutes
+        self.batteryTemperature = batteryTemperature
+        self.batteryCycleCount = batteryCycleCount
+        self.batteryHealthPercent = batteryHealthPercent
+        self.adapterRatedWatts = adapterRatedWatts
+        self.adapterName = adapterName
+        self.adapterNegotiatedWatts = adapterNegotiatedWatts
+        self.adapterNegotiatedVoltageMV = adapterNegotiatedVoltageMV
+        self.adapterNegotiatedCurrentMA = adapterNegotiatedCurrentMA
         self.pInput = pInput
         self.pSystem = pSystem
         self.pBattery = pBattery
@@ -99,6 +123,42 @@ public struct PowerSample: Identifiable, Sendable {
     /// 当前采样点是否处于「未充电的插电状态」。
     public var isIdleOnAC: Bool {
         onAC && chargePower == nil
+    }
+
+    /// 判断是否处于「供电瓶颈 / 倒贴放电」状态（插着电源但输入功率不足以支撑整机负载，电池被迫放电）。
+    public var isUnderpowered: Bool {
+        guard onAC,
+              let battery = pBattery, battery < -0.35,
+              let input = pInput,
+              let load = pSystem,
+              input + 0.35 < load else {
+            return false
+        }
+        return true
+    }
+
+    /// 适配器及 USB-PD 规格摘要（如 "100W · 20V/5.0A" 或 "Apple 96W"）。
+    public var adapterSummary: String? {
+        guard onAC else { return nil }
+        var parts: [String] = []
+        if let rated = adapterRatedWatts, rated > 0 {
+            parts.append(String(format: "%.0fW", rated))
+        } else if let neg = adapterNegotiatedWatts, neg > 0 {
+            parts.append(String(format: "%.0fW", neg))
+        }
+        if let v = adapterNegotiatedVoltageMV, let a = adapterNegotiatedCurrentMA, v > 0, a > 0 {
+            let volts = Double(v) / 1000.0
+            let amps = Double(a) / 1000.0
+            parts.append(String(format: "%.0fV/%.1fA", volts, amps))
+        }
+        guard !parts.isEmpty else {
+            return adapterName
+        }
+        let spec = parts.joined(separator: " · ")
+        if let name = adapterName, !name.isEmpty, name != "pd charger" {
+            return "\(name) · \(spec)"
+        }
+        return spec
     }
 }
 

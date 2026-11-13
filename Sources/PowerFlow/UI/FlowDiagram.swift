@@ -73,6 +73,7 @@ struct FlowDiagram: View {
     }
 
     private var sourceTitle: String {
+        if sample.isUnderpowered { return "输入不足" }
         if sample.onAC { return "电源输入" }
         return sample.dischargePower == nil ? "电池供电" : "电池放电"
     }
@@ -105,7 +106,7 @@ struct FlowDiagram: View {
 
             // 比例尺度基准
             let branchMax = systemBranches.map(\.watts).max() ?? 0
-            let scale = max(sourceWatts, sample.pSystem ?? 0, sample.chargePower ?? 0, branchMax, 1)
+            let scale = max(sourceWatts, sample.pSystem ?? 0, sample.chargePower ?? 0, sample.dischargePower ?? 0, branchMax, 1)
 
             // 水平基准锚点（与整体面板两端 14pt 边距严格对齐）
             let sourceRight: CGFloat = 54
@@ -115,11 +116,14 @@ struct FlowDiagram: View {
             let branchCenterX: CGFloat = width - 56
 
             let isCharging = sample.onAC && (sample.chargePower ?? 0) > 0.05
+            let isUnderpowered = sample.isUnderpowered
+            let hasTopBatteryBranch = isCharging || isUnderpowered
             let chargeWatts = sample.chargePower ?? 0
+            let supplementWatts = sample.dischargePower ?? 0
 
             // 垂直锚点计算
-            let sourceCenterY: CGFloat = isCharging ? 110 : 102
-            let macCenterY: CGFloat = isCharging ? 132 : 102
+            let sourceCenterY: CGFloat = hasTopBatteryBranch ? 110 : 102
+            let macCenterY: CGFloat = hasTopBatteryBranch ? 132 : 102
 
             ZStack {
                 // MARK: - 第一级流向：输入 -> (电池充电 + 系统负载)
@@ -153,6 +157,37 @@ struct FlowDiagram: View {
                     // 右上角电池充入节点
                     batteryChargingNode(watts: chargeWatts, x: branchCenterX, y: 24)
 
+                } else if isUnderpowered {
+                    // 供电不足双源输入：
+                    // 1. 电池放电补充 -> Mac 系统负载（从右上角电池流入 Mac）
+                    Ribbon(
+                        startY: 24, endY: macCenterY - 12,
+                        startThickness: thickness(supplementWatts, scale: scale),
+                        endThickness: thickness(supplementWatts, scale: scale)
+                    )
+                    .fill(LinearGradient(
+                        colors: [Theme.amber.opacity(0.18), Theme.amber.opacity(0.36)],
+                        startPoint: .trailing, endPoint: .leading
+                    ))
+                    .frame(width: branchLeft - macRight, height: height)
+                    .position(x: (macRight + branchLeft) / 2, y: height / 2)
+
+                    // 2. 外部适配器输入 -> Mac 系统负载
+                    Ribbon(
+                        startY: sourceCenterY, endY: macCenterY + 8,
+                        startThickness: thickness(sourceWatts, scale: scale),
+                        endThickness: thickness(sourceWatts, scale: scale)
+                    )
+                    .fill(LinearGradient(
+                        colors: [Theme.amber.opacity(0.24), Theme.mint.opacity(0.30)],
+                        startPoint: .leading, endPoint: .trailing
+                    ))
+                    .frame(width: macLeft - sourceRight, height: height)
+                    .position(x: (sourceRight + macLeft) / 2, y: height / 2)
+
+                    // 右上角电池补电节点
+                    batterySupplementNode(watts: supplementWatts, x: branchCenterX, y: 24)
+
                 } else {
                     // 非充电状态（纯电池放电 或 插电待机）：总输入 100% 进入系统负载
                     let flowColor = sample.onAC ? Theme.mint : Theme.amber
@@ -172,8 +207,8 @@ struct FlowDiagram: View {
                 // MARK: - 第二级流向：Mac 系统负载 -> 各构成分支
                 let rows = systemBranches
                 let branchCount = rows.count
-                let topY: CGFloat = isCharging ? 68 : 26
-                let bottomY: CGFloat = isCharging ? 186 : 178
+                let topY: CGFloat = hasTopBatteryBranch ? 68 : 26
+                let bottomY: CGFloat = hasTopBatteryBranch ? 186 : 178
 
                 // 核心修复：Sankey 流带分层堆叠（每个分支在 Mac 右侧有独立的起始 Y，绝不挤压重叠）
                 let branchThicknesses = rows.map { thickness($0.watts, scale: scale) }
@@ -246,6 +281,34 @@ struct FlowDiagram: View {
         .position(x: x, y: y)
     }
 
+    private func batterySupplementNode(watts: Double, x: CGFloat, y: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "battery.25percent")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.amber)
+            Text("电池补电")
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.amber.opacity(0.9))
+            Spacer(minLength: 0)
+            Text("-" + Fmt.watts(watts) + " W")
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.amber)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Theme.amber.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(Theme.amber.opacity(0.35), lineWidth: 0.8)
+                )
+        )
+        .frame(width: 112)
+        .position(x: x, y: y)
+    }
+
     private func branchNode(_ branch: Branch, x: CGFloat, y: CGFloat) -> some View {
         HStack(spacing: 6) {
             Image(systemName: branch.icon)
@@ -278,7 +341,8 @@ struct FlowDiagram: View {
 
     private func sourceNode(centerY: CGFloat) -> some View {
         let isAC = sample.onAC
-        let tint = isAC ? Theme.mint : Theme.amber
+        let isUnderpowered = sample.isUnderpowered
+        let tint = isUnderpowered ? Theme.amber : (isAC ? Theme.mint : Theme.amber)
         return VStack(spacing: 2) {
             Image(systemName: sourceIcon)
                 .font(.system(size: 15, weight: .light))

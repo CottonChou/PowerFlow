@@ -18,6 +18,12 @@ public struct BatteryReading: Sendable {
     public var cycleCount: Int?
     public var healthPercent: Double?
     public var adapterRatedWatts: Double?
+    public var adapterName: String?
+    public var adapterVoltageMV: Int?
+    public var adapterCurrentMA: Int?
+    public var negotiatedWatts: Double?
+    public var negotiatedVoltageMV: Int?
+    public var negotiatedCurrentMA: Int?
 
     public var pInput: Double?
     public var pSystem: Double?
@@ -52,8 +58,14 @@ public enum BatteryProbe {
             if let adapter = (registry["AdapterDetails"] as? [String: Any])
                 ?? (registry["AppleRawAdapterDetails"] as? [[String: Any]])?.first {
                 reading.adapterRatedWatts = int(adapter["Watts"]).map(Double.init)
+                reading.adapterName = (adapter["Name"] as? String) ?? (adapter["Description"] as? String)
+                reading.adapterVoltageMV = int(adapter["AdapterVoltage"])
+                reading.adapterCurrentMA = int(adapter["Current"])
             }
         }
+
+        // 读取 USB-PD 协商档位 (Voltage / Current / Max Power)
+        applyUSBPDDetails(&reading)
 
         // 先通过 IOPS 刷新实时的 onAC、charging、电量及剩余时间
         applyPowerSource(&reading)
@@ -143,6 +155,35 @@ public enum BatteryProbe {
                     .flatMap { $0 > 0 ? $0 : nil }
             }
             break
+        }
+    }
+
+    /// 读取 USB-PD 端口协商的真实功率档位。
+    private static func applyUSBPDDetails(_ reading: inout BatteryReading) {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOPortFeaturePowerSource"), &iterator) == KERN_SUCCESS else { return }
+        defer { IOObjectRelease(iterator) }
+
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            var unmanaged: Unmanaged<CFMutableDictionary>?
+            guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+                  let dict = unmanaged?.takeRetainedValue() as? [String: Any] else { continue }
+            guard (dict["PowerSourceName"] as? String) == "USB-PD" else { continue }
+            if let winning = dict["WinningPowerSourceOption"] as? [String: Any] {
+                if let mv = int(winning["Voltage (mV)"]) {
+                    reading.negotiatedVoltageMV = mv
+                }
+                if let ma = int(winning["Max Current (mA)"]) {
+                    reading.negotiatedCurrentMA = ma
+                }
+                if let mw = int(winning["Max Power (mW)"]) {
+                    reading.negotiatedWatts = Double(mw) / 1000.0
+                } else if let mv = reading.negotiatedVoltageMV, let ma = reading.negotiatedCurrentMA {
+                    reading.negotiatedWatts = Double(mv * ma) / 1_000_000.0
+                }
+                break
+            }
         }
     }
 

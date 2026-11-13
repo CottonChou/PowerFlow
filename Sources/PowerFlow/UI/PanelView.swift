@@ -1,5 +1,64 @@
 import SwiftUI
+import AppKit
 import PowerFlowCore
+
+/// 解决并缓存 App 图标（参考 bar-control 的紧凑应用图标呈现）。
+struct AppIconView: View {
+    let key: String
+    let name: String
+
+    private static let cache = NSCache<NSString, NSImage>()
+
+    var body: some View {
+        Group {
+            if let icon = resolveIcon() {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: fallbackIcon)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary.opacity(0.75))
+            }
+        }
+        .frame(width: 15, height: 15)
+        .clipShape(RoundedRectangle(cornerRadius: 3.2))
+    }
+
+    private var fallbackIcon: String {
+        key.hasPrefix("bin:") ? "terminal" : "app.dashed"
+    }
+
+    private func resolveIcon() -> NSImage? {
+        let cacheKey = key as NSString
+        if let cached = Self.cache.object(forKey: cacheKey) {
+            return cached
+        }
+        var icon: NSImage?
+        if key.hasPrefix("app:") {
+            let path = String(key.dropFirst(4))
+            if FileManager.default.fileExists(atPath: path) {
+                icon = NSWorkspace.shared.icon(forFile: path)
+            }
+        } else if key.hasPrefix("bin:") {
+            let path = String(key.dropFirst(4))
+            if FileManager.default.fileExists(atPath: path) {
+                icon = NSWorkspace.shared.icon(forFile: path)
+            }
+        }
+        if icon == nil {
+            if let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.localizedName == name || $0.bundleIdentifier == key
+            }) {
+                icon = running.icon
+            }
+        }
+        if let found = icon {
+            Self.cache.setObject(found, forKey: cacheKey)
+        }
+        return icon
+    }
+}
 
 /// 菜单栏弹出面板的纯视图：只吃数据，不依赖采样器，便于离屏渲染校验。
 struct PanelContent: View {
@@ -15,6 +74,8 @@ struct PanelContent: View {
             header
             if let sample {
                 headline(sample)
+                hardwareSpecsRow(sample)
+                underpoweredWarning(sample)
                 FlowDiagram(sample: sample)
                     .padding(.horizontal, 14)
                 Divider()
@@ -66,6 +127,12 @@ struct PanelContent: View {
                 Text(remaining)
                     .font(.system(size: 10, design: .rounded))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            if let temp = sample?.batteryTemperature {
+                Text(String(format: "%.0f°C", temp))
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundStyle(.secondary.opacity(0.75))
                     .monospacedDigit()
             }
         }
@@ -141,6 +208,72 @@ struct PanelContent: View {
         }
     }
 
+    /// 硬件规格与快照摘要条（参考 bar-control 的电源与线缆协商指标展示）。
+    @ViewBuilder
+    private func hardwareSpecsRow(_ sample: PowerSample) -> some View {
+        HStack(spacing: 6) {
+            if sample.onAC, let spec = sample.adapterSummary {
+                HStack(spacing: 3) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.blue)
+                    Text(spec)
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            } else if let health = sample.batteryHealthPercent {
+                HStack(spacing: 3) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 7.5))
+                        .foregroundStyle(Theme.mint)
+                    Text("健康度 \(Int(health))%")
+                        .font(.system(size: 9, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    if let cycles = sample.batteryCycleCount {
+                        Text("(\(cycles)次循环)")
+                            .font(.system(size: 8.5, design: .rounded))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if let health = sample.batteryHealthPercent, sample.onAC {
+                Text("健康度 \(Int(health))%")
+                    .font(.system(size: 8.5, design: .rounded))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 5)
+    }
+
+    /// 供电不足报警提示（参考 bar-control 的电源瓶颈诊断）。
+    @ViewBuilder
+    private func underpoweredWarning(_ sample: PowerSample) -> some View {
+        if sample.isUnderpowered {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Theme.amber)
+                Text(String(format: "供电不足：输入 %.1fW < 负载 %.1fW，电池正在辅助放电",
+                            sample.pInput ?? 0, sample.pSystem ?? 0))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Theme.amber)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.amber.opacity(0.12))
+            .cornerRadius(6)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 5)
+        }
+    }
+
     private func appList(_ sample: PowerSample) -> some View {
         let apps = Array(sample.apps.filter { $0.watts >= 0.05 }.prefix(3))
         return VStack(spacing: 4) {
@@ -165,11 +298,12 @@ struct PanelContent: View {
         .padding(.vertical, 9)
     }
 
-    private static let appRowHeight: CGFloat = 15
+    private static let appRowHeight: CGFloat = 18
 
     /// 占位行：保持面板高度恒定，又不至于看起来像布局漏了一块。
     private var emptyRow: some View {
-        HStack {
+        HStack(spacing: 6) {
+            Color.clear.frame(width: 15, height: 15)
             Text("—")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary.opacity(0.35))
@@ -180,6 +314,7 @@ struct PanelContent: View {
 
     private func appRow(_ app: AppUsage) -> some View {
         HStack(spacing: 6) {
+            AppIconView(key: app.key, name: app.name)
             Text(app.name)
                 .font(.system(size: 10.5))
                 .lineLimit(1)
